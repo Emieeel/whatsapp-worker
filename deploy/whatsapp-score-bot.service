@@ -1,0 +1,28 @@
+# Alternative to Docker. Install:
+#   sudo cp deploy/whatsapp-score-bot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now whatsapp-score-bot
+[Unit]
+Description=WhatsApp score bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/whatsapp-score-bot
+Environment=NODE_ENV=production
+Environment=NODE_OPTIONS=--max-old-space-size=192
+ExecStart=/usr/bin/node dist/index.js
+Restart=on-failure
+RestartSec=10
+# 78 = logged out of WhatsApp: restarting won't help, relink first
+RestartPreventExitStatus=78
+MemoryMax=300M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/whatsapp-score-bot/auth /opt/whatsapp-score-bot/data
+
+[Install]
+WantedBy=multi-user.target

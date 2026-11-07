@@ -1,0 +1,18 @@
+services:
+  bot:
+    build: .
+    image: whatsapp-score-bot:latest
+    container_name: whatsapp-score-bot
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    volumes:
+      - ./auth:/app/auth            # WhatsApp login (secret!)
+      - ./data:/app/data            # SQLite database
+      - ./config.json:/app/config.json:ro
+    mem_limit: 300m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

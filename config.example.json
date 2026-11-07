@@ -1,0 +1,7 @@
+{
+  "aliases": {
+    "_comment": "Keys: phone number (31612345678), phone JID (...@s.whatsapp.net) or LID (...@lid). Run `npm run cli -- players` to see ids.",
+    "31612345678": "Jan",
+    "123456789012345@lid": "Anna"
+  }
+}

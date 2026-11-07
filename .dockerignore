@@ -1,0 +1,9 @@
+node_modules
+dist
+auth*
+data
+backups
+.env
+config.json
+.git
+test
