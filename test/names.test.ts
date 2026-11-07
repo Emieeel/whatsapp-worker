@@ -7,7 +7,7 @@ describe('names', () => {
   it('takes the first real word of a name', () => {
     expect(firstName('Bob Jansen')).toBe('Bob');
     expect(firstName('~ 🎯 Eva de Wit')).toBe('Eva');
-    expect(firstName('Cas')).toBe('Cas');
+    expect(firstName('Kim')).toBe('Kim');
   });
 
   it('shows first names, full names only when two players share one, and aliases first', () => {
