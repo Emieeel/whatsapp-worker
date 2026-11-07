@@ -86,6 +86,7 @@ export function buildRoastPrompt(rows: ScoreRow[], target: Candidate, pseudo: Ps
 
   for (const game of GAMES) {
     const gameRows = rows.filter((r) => r.game === game.id);
+    if (gameRows.length === 0) continue; // nobody played it: nothing to roast about
     const own = gameRows.filter((r) => r.player_jid === target.jid).map((r) => r.score);
     const others = gameRows.filter((r) => r.player_jid !== target.jid).map((r) => r.score);
     let line = `- ${game.name} (max ${game.maxScore}): `;

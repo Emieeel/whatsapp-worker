@@ -28,11 +28,16 @@ export function parseCommand(text: string): ParsedCommand | null {
   return arg ? { command, arg } : { command };
 }
 
+/** "a", "a of b", "a, b of c" */
+function dutchList(items: string[]): string {
+  return items.length <= 1 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} of ${items.at(-1)}`;
+}
+
 export function helpText(leaderboardTime: { hour: number; minute: number }, opts: { roast: boolean }): string {
   const time = `${String(leaderboardTime.hour).padStart(2, '0')}:${String(leaderboardTime.minute).padStart(2, '0')}`;
   return [
     '🤖 *Scorebot*',
-    `Plak je ${GAMES.map((g) => `${g.emoji} ${g.name}`).join(' of ')}-resultaat in de groep; je eerste score per dag telt.`,
+    `Plak je ${dutchList(GAMES.map((g) => `${g.emoji} ${g.name}`))}-resultaat in de groep; je eerste score per dag telt.`,
     '',
     '*!stand* – vandaag',
     '*!week* – deze week (gemiddelde per spel)',

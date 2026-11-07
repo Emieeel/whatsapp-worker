@@ -58,6 +58,7 @@ describe('commands', () => {
     const without = setup('2026-11-06T15:00:00');
     await without.bot.handleGroupMessage(message({ text: '!help', timestamp: at('15:00:00') }));
     expect(without.messenger.sent[0]).not.toContain('!roast');
+    expect(without.messenger.sent[0]).toContain('Plak je 📍 Polderprikker, 🗺️ MapTap of 🕰️ TimeGuessr-resultaat');
     expect(without.messenger.sent[0]!.split('\n').length).toBeLessThanOrEqual(10);
 
     const withAi = setup('2026-11-06T15:00:00', { ask: async () => 'x' });

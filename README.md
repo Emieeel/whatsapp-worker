@@ -1,6 +1,6 @@
 # WhatsApp score bot
 
-Tracks daily **Polderprikker** and **MapTap** scores in a WhatsApp group of friends and posts a
+Tracks daily **Polderprikker**, **MapTap** and **TimeGuessr** scores in a WhatsApp group of friends and posts a
 leaderboard every evening at 22:00 (Europe/Amsterdam), with a weekly summary on Sundays.
 
 - Logs in as a *linked device* of a separate WhatsApp account (Baileys 7, no browser).

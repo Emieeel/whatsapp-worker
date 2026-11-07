@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseScores } from '../src/games/index.js';
 import { maptap } from '../src/games/maptap.js';
 import { polderprikker } from '../src/games/polderprikker.js';
+import { timeguessr } from '../src/games/timeguessr.js';
 
 describe('Polderprikker', () => {
   it('parses the canonical share text', () => {
@@ -57,6 +58,40 @@ describe('MapTap', () => {
     ['score without the site', 'Final score: 900'],
   ])('rejects %s', (_label, text) => {
     expect(maptap.parse(text)).toBeNull();
+  });
+});
+
+describe('TimeGuessr', () => {
+  it('parses the canonical share text', () => {
+    const text = [
+      'TimeGuessr #1236 — 36,960/50,000',
+      '',
+      '1️⃣ 🏆6,769 · 📅 8y · 🌍 230.8km',
+      '2️⃣ 🏆6,963 · 📅 13y · 🌍 1.1km',
+      '3️⃣ 🏆7,409 · 📅 7y · 🌍 490.8km',
+      '4️⃣ 🏆8,885 · 📅 5y · 🌍 774m',
+      '5️⃣ 🏆6,934 · 📅 13y · 🌍 2.9km',
+      '',
+      'https://timeguessr.com',
+    ].join('\n');
+    expect(timeguessr.parse(text)).toEqual({ score: 36960, maxScore: 50000, puzzle: '1236' });
+  });
+
+  it.each([
+    ['dots in the rounds', 'TimeGuessr #1237 — 21,588/50,000\n\n1️⃣ 🏆1.800 · 📅 16y · 🌍 11948.5km', 21588, '1237'],
+    ['the alternative round format', 'TimeGuessr #1239 — 39,035/50,000\n\n1️⃣ 🏆8102 - 📅0y - 🌍909.3km', 39035, '1239'],
+    ['a hyphen and dot separators', 'TimeGuessr #1240 - 44.860/50.000', 44860, '1240'],
+    ['no separators and extra spaces', 'timeguessr  # 1241  –  4986 / 50000', 4986, '1241'],
+  ])('handles %s', (_label, text, score, puzzle) => {
+    expect(timeguessr.parse(text)).toEqual({ score, maxScore: 50000, puzzle });
+  });
+
+  it.each([
+    ['score above max', 'TimeGuessr #1236 — 60,000/50,000'],
+    ['just talking about it', 'TimeGuessr is wel leuk, doe je mee?'],
+    ['only the link', 'https://timeguessr.com'],
+  ])('rejects %s', (_label, text) => {
+    expect(timeguessr.parse(text)).toBeNull();
   });
 });
 

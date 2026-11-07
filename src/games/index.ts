@@ -1,11 +1,12 @@
 import { maptap } from './maptap.js';
 import { polderprikker } from './polderprikker.js';
+import { timeguessr } from './timeguessr.js';
 import type { GameParser, ParsedScore } from './types.js';
 
 export type { GameParser, ParsedScore } from './types.js';
 
 /** All supported games, in the order they appear in the leaderboard. Register new parsers here. */
-export const GAMES: readonly GameParser[] = [polderprikker, maptap];
+export const GAMES: readonly GameParser[] = [polderprikker, maptap, timeguessr];
 
 const byId = new Map(GAMES.map((g) => [g.id, g]));
 
