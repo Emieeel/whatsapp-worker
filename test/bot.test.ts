@@ -43,7 +43,7 @@ describe('commands', () => {
     expect(parseCommand('wat is de !stand')).toBeNull();
     expect(parseCommand('!foo')).toBeNull();
     expect(parseCommand(`!roast ${'x'.repeat(80)}`)).toBeNull();
-    expect(parseCommand('!roast Davids skatevaardigheden')).toEqual({ command: 'roast', arg: 'Davids skatevaardigheden' });
+    expect(parseCommand('!roast Jans fietskunsten')).toEqual({ command: 'roast', arg: 'Jans fietskunsten' });
   });
 
   it("answers !stand with today's standings", async () => {

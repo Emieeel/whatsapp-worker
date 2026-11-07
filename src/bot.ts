@@ -149,7 +149,7 @@ export class ScoreBot {
   }
 
   /**
-   * `!roast [query]`: a player (name, mention, "mij", or a topic like "Davids geheugen"), the bot
+   * `!roast [query]`: a player (name, mention, "mij", or a topic like "Jans geheugen"), the bot
    * itself ("jezelf"), or anyone/anything else; a random active player without a query.
    * Returns the message to send, or null when there is nothing to say.
    */

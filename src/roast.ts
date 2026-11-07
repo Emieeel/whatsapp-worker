@@ -92,7 +92,7 @@ export function findPlayers(query: string, candidates: Candidate[]): Candidate[]
   return [];
 }
 
-/** "Davids" / "David's" / "Thijs'" -> the bare word. */
+/** "Jans" / "Jan's" / "Klaas'" -> the bare word. */
 const stripPossessive = (word: string) => word.replace(/['’]s$|['’]$|s$/i, '');
 
 /** Players whose first name (or alias) appears as a word in `text`, also with a possessive. */
