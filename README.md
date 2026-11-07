@@ -210,9 +210,14 @@ Higher scores rank higher. For a game where lower is better, such as Wordle gues
 
 ## Optional: !roast and a daily joke (Claude)
 
-With an API key in `.env`, `!roast` works: `!roast jan` (a name, first name, start of a name, or an
-@mention) roasts that player; `!roast` alone picks a random active player. `ENABLE_JOKES=true` also adds
-a dry joke to the 22:00 post. `ENABLE_ROAST=false` turns `!roast` off.
+With an API key in `.env`, `!roast` works on anyone and anything:
+- `!roast jan` (a name, first name, start of a name, surname or @mention) roasts that player from their
+  statistics; `!roast` alone picks a random active player and `!roast mij` the one who asks.
+- `!roast Jans geheugen` roasts that player about the given topic.
+- `!roast jezelf` (or `bot`, `ai`) makes the bot roast itself.
+- Anything else (`!roast de NS`) is roasted from public knowledge; when the bot does not know it, it roasts
+  the one who asked instead.
+- `ENABLE_JOKES=true` also adds a dry joke to the 22:00 post. `ENABLE_ROAST=false` turns `!roast` off.
 
 The key can be an Anthropic key (`ANTHROPIC_API_KEY=sk-ant-...`, model `ANTHROPIC_MODEL`, default
 `claude-haiku-5-5`) or an OpenRouter key (`OPENROUTER_API_KEY=sk-or-...`, model `OPENROUTER_MODEL`, default
@@ -223,12 +228,17 @@ A roast is built from the last 14 days of scores (averages, ranks, daily wins an
 posting time) plus, optionally, one running joke per player from `config.json`:
 
 ```json
-"roastNotes": { "31612345678": ["slaapt elke ochtend door zijn wekker heen", "denkt dat Zwolle in Friesland ligt"] }
+"roastNotes": {
+  "31612345678": ["slaapt elke ochtend door zijn wekker heen", "denkt dat Zwolle in Friesland ligt"],
+  "bot": ["running jokes about the bot itself, for !roast jezelf"]
+}
 ```
 
 Players appear as `{p1}` in everything sent to the API, and the bot puts the name back in locally, so
 names, phone numbers and chat messages never leave the machine. Running jokes are sent as written, so
-keep names out of them. Check what is sent with `node dist/cli.js roast <name>`.
+keep names out of them; so is the text after `!roast`, except that players' names are replaced. Only one
+running joke goes into half of the roasts, and the last three roasts per target are sent along so the
+model does not repeat itself. Check what is sent with `node dist/cli.js roast <name>`.
 
 To get an Anthropic key: create an account at https://console.anthropic.com, buy a few dollars of
 credits, set a monthly spend limit, then create a key under *API keys*.

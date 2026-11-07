@@ -3,6 +3,7 @@ import { makeAsk, Pseudonyms, type AskFn } from './ai.js';
 import { helpText, parseCommand, type Command } from './commands.js';
 import { normalizeIdForAlias, type AppConfig } from './config.js';
 import type { Store } from './db.js';
+import { GAMES } from './games/index.js';
 import { generateJoke } from './joke.js';
 import {
   buildDaily,
@@ -14,9 +15,22 @@ import {
   type DailyStandings,
 } from './leaderboard.js';
 import { makeNameLookup } from './names.js';
-import { buildRoastPrompt, findPlayers, generateRoast, ROAST_DAYS, type Candidate } from './roast.js';
+import {
+  buildBotPrompt,
+  buildOtherPrompt,
+  buildRoastPrompt,
+  generateBotRoast,
+  generateOtherRoast,
+  generateRoast,
+  resolveRoastTarget,
+  ROAST_DAYS,
+  type BotFacts,
+  type Candidate,
+  type RoastResult,
+  type RoastTarget,
+} from './roast.js';
 import { ingestMessage, type IncomingMessage } from './scores.js';
-import { addDays, dayKey, isSunday, minutesOfDay, weekStart } from './time.js';
+import { addDays, dayKey, formatDayMonth, isSunday, minutesOfDay, weekStart } from './time.js';
 
 /** What the bot needs from the chat transport. Implemented by WhatsAppClient (and fakes in tests). */
 export interface Messenger {
@@ -36,11 +50,17 @@ export interface BotDeps {
 const COMMAND_MAX_AGE_S = 120;
 /** Minimum time between two answers to the same command. */
 const COMMAND_COOLDOWN_MS = 30_000;
+/** !roast is the fun one: a shorter cooldown, so a quick second request is not silently dropped. */
+const ROAST_COOLDOWN_MS = 10_000;
+/** Earlier roasts per target that are shown to the model, so it does not repeat itself. */
+const ROAST_MEMORY = 3;
 /** Number of calendar weeks in the !weken overview. */
 const OVERVIEW_WEEKS = 6;
 
 export class ScoreBot {
   private readonly lastAnswered = new Map<Command, number>();
+  /** Per roast target: recent roasts (with tokens) and the last running joke used. Lost on restart. */
+  private readonly roastMemory = new Map<string, { recent: string[]; lastNote?: string }>();
   private readonly now: () => Date;
   private readonly random: () => number;
   private readonly ask: AskFn | null;
@@ -69,7 +89,7 @@ export class ScoreBot {
   async handleGroupMessage(msg: IncomingMessage): Promise<void> {
     const parsed = parseCommand(msg.text);
     if (parsed) {
-      await this.handleCommand(parsed.command, parsed.arg, msg.timestamp);
+      await this.handleCommand(parsed.command, parsed.arg, msg);
       return;
     }
 
@@ -82,8 +102,8 @@ export class ScoreBot {
     }
   }
 
-  private async handleCommand(command: Command, arg: string | undefined, timestamp: number): Promise<void> {
-    const ageS = this.now().getTime() / 1000 - timestamp;
+  private async handleCommand(command: Command, arg: string | undefined, msg: IncomingMessage): Promise<void> {
+    const ageS = this.now().getTime() / 1000 - msg.timestamp;
     if (ageS > COMMAND_MAX_AGE_S) {
       this.log.debug({ command, ageS }, 'Ignoring old command');
       return;
@@ -93,7 +113,8 @@ export class ScoreBot {
       return;
     }
     const last = this.lastAnswered.get(command) ?? 0;
-    if (this.now().getTime() - last < COMMAND_COOLDOWN_MS) {
+    const cooldown = command === 'roast' ? ROAST_COOLDOWN_MS : COMMAND_COOLDOWN_MS;
+    if (this.now().getTime() - last < cooldown) {
       this.log.debug({ command }, 'Command on cooldown');
       return;
     }
@@ -105,7 +126,9 @@ export class ScoreBot {
     if (command === 'stand') text = formatDaily(await this.daily(day), { final: false });
     else if (command === 'week') text = formatWeekly(this.weekly(day), { final: false });
     else if (command === 'overview') text = formatOverview(this.overview(day));
-    else if (command === 'roast') text = await this.roast(arg);
+    else if (command === 'roast') {
+      text = await this.roast(arg, { requester: { jid: msg.playerJid, pushName: msg.pushName, phoneJid: msg.phoneJid } });
+    }
     else text = helpText(this.cfg.leaderboardTime, { roast: this.roastAvailable });
     if (text) await this.safeSend(text);
   }
@@ -126,48 +149,108 @@ export class ScoreBot {
   }
 
   /**
-   * Roast `query` (a name or @mention), or a random active player without one. Returns the
-   * message to send, a short "who?" reply for unknown names, or null when there is nothing to say.
+   * `!roast [query]`: a player (name, mention, "mij", or a topic like "Davids geheugen"), the bot
+   * itself ("jezelf"), or anyone/anything else; a random active player without a query.
+   * Returns the message to send, or null when there is nothing to say.
    */
-  async roast(query?: string, opts: { showPrompt?: (prompt: string) => void } = {}): Promise<string | null> {
+  async roast(
+    query?: string,
+    opts: {
+      requester?: { jid: string; pushName?: string; phoneJid?: string };
+      showPrompt?: (prompt: string) => void;
+    } = {},
+  ): Promise<string | null> {
     const day = this.today();
     const nameOf = this.nameLookup();
-    let target: Candidate | undefined;
+    const candidates: Candidate[] = this.store.players().map((p) => ({
+      jid: p.jid,
+      name: nameOf(p.jid),
+      phoneJid: p.phone_jid ?? undefined,
+      altNames: [p.name],
+    }));
+    const r = opts.requester;
+    const requester = r
+      ? (candidates.find((c) => c.jid === r.jid) ?? { jid: r.jid, name: nameOf(r.jid, r.pushName), phoneJid: r.phoneJid })
+      : undefined;
 
+    let target: RoastTarget;
     if (query) {
-      const candidates = this.store.players().map((p) => ({
-        jid: p.jid,
-        name: nameOf(p.jid),
-        phoneJid: p.phone_jid ?? undefined,
-        altNames: [p.name],
-      }));
-      const matches = findPlayers(query, candidates);
-      if (matches.length === 0) return `🤔 Wie is ${query.slice(0, 30)}?`;
-      if (matches.length > 1) return `🤔 Wie bedoel je: ${matches.map((m) => m.name).join(' of ')}?`;
-      target = matches[0];
+      const resolved = resolveRoastTarget(query, candidates, requester);
+      if ('ambiguous' in resolved) return `🤔 Wie bedoel je: ${resolved.ambiguous.map((m) => m.name).join(' of ')}?`;
+      target = resolved;
     } else {
       const active = (await this.expectedPlayers(day)).sort();
       const jid = active[Math.floor(this.random() * active.length)];
-      if (jid) target = { jid, name: nameOf(jid) };
+      if (!jid) return null;
+      target = { kind: 'player', player: candidates.find((c) => c.jid === jid) ?? { jid, name: nameOf(jid) } };
     }
-    if (!target) return null;
 
-    const rows = this.store.scoresBetween(addDays(day, -(ROAST_DAYS - 1)), day);
-    const phone = target.phoneJid ?? this.store.players().find((p) => p.jid === target.jid)?.phone_jid ?? undefined;
-    const allNotes =
-      this.cfg.roastNotes.get(normalizeIdForAlias(target.jid)) ??
+    const key =
+      target.kind === 'player' ? target.player.jid : target.kind === 'bot' ? 'bot' : `other:${target.text.toLocaleLowerCase('nl')}`;
+    const memory = this.roastMemory.get(key) ?? { recent: [] };
+    let result: RoastResult | null;
+    let usedNote: string | undefined;
+
+    if (target.kind === 'player') {
+      const player = target.player;
+      const rows = this.store.scoresBetween(addDays(day, -(ROAST_DAYS - 1)), day);
+      usedNote = this.pickNote(this.notesFor(player), memory.lastNote);
+      const ctx = {
+        today: day,
+        timeZone: this.cfg.timezone,
+        notes: usedNote ? [usedNote] : [],
+        topic: target.topic,
+        recent: memory.recent,
+      };
+      opts.showPrompt?.(buildRoastPrompt(rows, player, new Pseudonyms(), ctx));
+      if (!this.ask) return null;
+      result = await generateRoast(rows, player, this.ask, ctx);
+    } else if (target.kind === 'bot') {
+      const facts = this.botFacts();
+      const notes = this.cfg.roastNotes.get('bot') ?? [];
+      opts.showPrompt?.(buildBotPrompt(facts, notes, memory.recent));
+      if (!this.ask) return null;
+      result = await generateBotRoast(facts, this.ask, notes, memory.recent);
+    } else {
+      opts.showPrompt?.(buildOtherPrompt(target.text, requester, target.mentioned, new Pseudonyms(), memory.recent));
+      if (!this.ask) return null;
+      result = await generateOtherRoast(target.text, requester, target.mentioned, this.ask, memory.recent);
+    }
+    if (!result) return null;
+
+    this.roastMemory.set(key, {
+      recent: [...memory.recent, result.tokens].slice(-ROAST_MEMORY),
+      lastNote: usedNote ?? memory.lastNote,
+    });
+    this.log.info({ target: target.kind === 'player' ? target.player.name : target.kind }, 'Roast generated');
+    return `🔥 ${result.text}`;
+  }
+
+  private notesFor(player: Candidate): string[] {
+    const phone = player.phoneJid ?? this.store.players().find((p) => p.jid === player.jid)?.phone_jid ?? undefined;
+    return (
+      this.cfg.roastNotes.get(normalizeIdForAlias(player.jid)) ??
       (phone ? this.cfg.roastNotes.get(normalizeIdForAlias(phone)) : undefined) ??
-      [];
-    // One running joke per roast, so they all come by in turn.
-    const note = allNotes[Math.floor(this.random() * allNotes.length)];
-    const notes = note ? [note] : [];
-    const ctx = { today: day, timeZone: this.cfg.timezone, notes };
-    opts.showPrompt?.(buildRoastPrompt(rows, target, new Pseudonyms(), ctx));
-    if (!this.ask) return null;
-    const roast = await generateRoast(rows, target, this.ask, ctx);
-    if (!roast) return null;
-    this.log.info({ target: target.name }, 'Roast generated');
-    return `🔥 ${roast}`;
+      []
+    );
+  }
+
+  /** Running jokes are seasoning: only half of the roasts get one, and never the same twice in a row. */
+  private pickNote(notes: string[], last?: string): string | undefined {
+    if (notes.length === 0 || this.random() >= 0.5) return undefined;
+    const options = notes.length > 1 ? notes.filter((n) => n !== last) : notes;
+    return options[Math.floor(this.random() * options.length)];
+  }
+
+  private botFacts(): BotFacts {
+    const rows = this.store.scoresBetween('0000-01-01', '9999-12-31');
+    const since = rows.reduce((min, r) => (r.game_day < min ? r.game_day : min), this.today());
+    return {
+      scores: rows.length,
+      players: new Set(rows.map((r) => r.player_jid)).size,
+      since: formatDayMonth(since),
+      games: [...new Set(rows.map((r) => r.game))].map((id) => GAMES.find((g) => g.id === id)?.name ?? id),
+    };
   }
 
   /** The 22:00 post: daily standings, plus the weekly summary on Sundays. Idempotent per day. */

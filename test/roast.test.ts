@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Pseudonyms } from '../src/ai.js';
 import { Store } from '../src/db.js';
-import { buildRoastPrompt, findPlayers } from '../src/roast.js';
+import { buildRoastPrompt, findPlayers, pseudonymizeText, resolveRoastTarget } from '../src/roast.js';
 import { ingestMessage } from '../src/scores.js';
 import { cet, MAPTAP, message, POLDER } from './helpers.js';
 
@@ -65,9 +65,38 @@ describe('buildRoastPrompt', () => {
         "- Polderprikker (max 5000): {p1} played it on 2 of the 2 days anyone played it, average 2500, best 3000, worst 2000, rank 3 of 3 by average (group's best average 4500), 0 daily wins, 1 time last of the day; the others average 4250",
         "- MapTap (max 1000): {p1} played it on 1 of the 1 day anyone played it, average 700, best 700, worst 700, rank 2 of 2 by average (group's best average 900), 0 daily wins, 1 time last of the day; the others average 900",
         '{p1} posted a result on 2 of the last 14 days, usually around 12:00; last result 2 days ago.',
-        'Running joke in the group about {p1} (build the roast around it):',
+        'Running joke in the group about {p1} (only use it if it makes the roast funnier):',
         '- speelt altijd om 7 uur',
       ].join('\n'),
+    );
+  });
+});
+
+describe('resolveRoastTarget', () => {
+  const me = players[1]!;
+  const kind = (q: string) => {
+    const t = resolveRoastTarget(q, players, me);
+    if ('ambiguous' in t) return ['ambiguous', t.ambiguous.map((p) => p.name)];
+    if (t.kind === 'player') return ['player', t.player.name, t.topic];
+    if (t.kind === 'bot') return ['bot'];
+    return ['other', t.text, t.mentioned.map((p) => p.name)];
+  };
+
+  it('understands players, the requester, the bot, topics and everything else', () => {
+    expect(kind('jan')).toEqual(['player', 'Jan de Boer', undefined]);
+    expect(kind('mij')).toEqual(['player', 'Joris', undefined]);
+    expect(kind('jezelf')).toEqual(['bot']);
+    expect(kind('this api')).toEqual(['bot']);
+    expect(kind("Jans skatevaardigheden")).toEqual(['player', 'Jan de Boer', "Jans skatevaardigheden"]);
+    expect(kind("Eva's kaartkennis")).toEqual(['player', 'Eva Bakker', "Eva's kaartkennis"]);
+    expect(kind('donald trump')).toEqual(['other', 'donald trump', []]);
+    expect(kind('jan en eva')).toEqual(['other', 'jan en eva', ['Jan de Boer', 'Eva Bakker']]);
+  });
+
+  it('replaces player names in free text by tokens', () => {
+    const pseudo = new Pseudonyms();
+    expect(pseudonymizeText("Jans fiets en Eva's kaart, niet Janneke", [players[0]!, players[2]!], pseudo)).toBe(
+      "{p1}s fiets en {p2}'s kaart, niet Janneke",
     );
   });
 });

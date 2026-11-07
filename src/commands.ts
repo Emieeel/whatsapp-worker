@@ -4,7 +4,7 @@ export type Command = 'stand' | 'week' | 'overview' | 'roast' | 'help';
 
 export interface ParsedCommand {
   command: Command;
-  /** Only `roast` takes an argument: who to roast. */
+  /** Only `roast` takes an argument: who or what to roast. */
   arg?: string;
 }
 
@@ -17,9 +17,9 @@ const KEYWORDS: Record<string, Command> = {
   help: 'help',
 };
 
-/** A command must be the whole message. Only `!roast` may be followed by a name (max 40 chars). */
+/** A command must be the whole message. Only `!roast` may be followed by who or what to roast (max 60 chars). */
 export function parseCommand(text: string): ParsedCommand | null {
-  const m = /^\s*!([a-z]+)(?:\s+(\S.{0,39}?))?\s*$/is.exec(text);
+  const m = /^\s*!([a-z]+)(?:\s+(\S.{0,59}?))?\s*$/is.exec(text);
   if (!m) return null;
   const command = KEYWORDS[m[1]!.toLowerCase()];
   if (!command) return null;
@@ -42,7 +42,7 @@ export function helpText(leaderboardTime: { hour: number; minute: number }, opts
     '*!stand* – vandaag',
     '*!week* – deze week (gemiddelde per spel)',
     '*!weken* – de afgelopen weken',
-    ...(opts.roast ? ['*!roast* [naam] – roast iemand (zonder naam: willekeurig)'] : []),
+    ...(opts.roast ? ['*!roast* [naam/iets] – roast iemand of iets (zonder naam: willekeurig)'] : []),
     '*!help* – dit bericht',
     '',
     `Elke avond om ${time} de dagstand, zondag ook de week.`,

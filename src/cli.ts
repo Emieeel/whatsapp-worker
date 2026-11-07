@@ -20,7 +20,8 @@ const USAGE = `Usage: cli <command>
   stand [YYYY-MM-DD]   standings for a day (default: today)
   week [YYYY-MM-DD]    week summary up to that day (default: today)
   weken [YYYY-MM-DD]   overview of the last weeks (the !weken command)
-  roast [name]         show the roast prompt for a player and, with an API key, the roast
+  roast [who] [--as name] [--times n]
+                       roast someone or something (SHOW_PROMPT=1 also prints the prompt)
   players              known players and their ids (for aliases in config.json)
   import <file> [--apply]
                        import past scores from a WhatsApp chat export (.txt);
@@ -86,8 +87,26 @@ async function main(): Promise<void> {
     } else if (command === 'weken') {
       console.log(formatOverview(bot.overview(day)));
     } else if (command === 'roast') {
-      const result = await bot.roast(arg, { showPrompt: (p) => console.log(`--- prompt sent to Claude ---\n${p}\n---`) });
-      console.log(result ?? '(no roast: no API key, or Claude gave no answer)');
+      // roast [who or what...] [--as <name>] [--times <n>]
+      const args = process.argv.slice(3);
+      const option = (flag: string) => {
+        const i = args.indexOf(flag);
+        return i >= 0 ? args.splice(i, 2)[1] : undefined;
+      };
+      const asName = option('--as');
+      const times = Number(option('--times') ?? 1);
+      const query = args.join(' ') || undefined;
+      const asPlayer = asName
+        ? store.players().find((p) => p.name.toLocaleLowerCase('nl').startsWith(asName.toLocaleLowerCase('nl')))
+        : undefined;
+      const requester = asPlayer ? { jid: asPlayer.jid, pushName: asPlayer.name } : undefined;
+      for (let i = 0; i < times; i++) {
+        const result = await bot.roast(query, {
+          requester,
+          showPrompt: process.env.SHOW_PROMPT ? (p) => console.log(`--- prompt sent to Claude ---\n${p}\n---`) : undefined,
+        });
+        console.log(result ?? '(no roast: no API key, or Claude gave no answer)');
+      }
     } else if (command === 'players') {
       for (const p of store.players()) {
         const alias = cfg.aliases.get(normalizeIdForAlias(p.jid)) ??

@@ -96,7 +96,8 @@ export function loadRoastNotes(configPath: string): Map<string, string[]> {
     const list = (Array.isArray(value) ? value : [value])
       .filter((v): v is string => typeof v === 'string' && v.trim() !== '')
       .map((v) => v.trim());
-    if (list.length > 0) notes.set(normalizeIdForAlias(key), list);
+    // "bot" holds running jokes about the bot itself (for !roast jezelf).
+    if (list.length > 0) notes.set(key === 'bot' ? 'bot' : normalizeIdForAlias(key), list);
   }
   return notes;
 }

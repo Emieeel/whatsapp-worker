@@ -29,16 +29,21 @@ export class Pseudonyms {
 
 /**
  * Tidy a model reply for WhatsApp: keep only the part inside <tag>...</tag> when the model used
- * the tag (drops any chatter around it), one paragraph, no wrapping quotes, names restored.
+ * the tag (drops any chatter around it), one paragraph, no wrapping quotes. Tokens stay as they are.
  */
-export function cleanReply(raw: string, pseudo: Pseudonyms, tag?: string): string | null {
+export function extractReply(raw: string, tag?: string): string | null {
   const tagged = tag ? new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'i').exec(raw)?.[1] : undefined;
   const text = (tagged ?? raw)
     .replace(/\s+/g, ' ')
     .replace(/^["'“”„]+|["'“”„]+$/g, '')
     .trim();
-  if (!text || text.length > 400) return null;
-  return pseudo.restore(text);
+  return text && text.length <= 400 ? text : null;
+}
+
+/** extractReply with the real names put back. */
+export function cleanReply(raw: string, pseudo: Pseudonyms, tag?: string): string | null {
+  const text = extractReply(raw, tag);
+  return text ? pseudo.restore(text) : null;
 }
 
 /** Claude client for jokes and roasts, or null when no API key is configured. */

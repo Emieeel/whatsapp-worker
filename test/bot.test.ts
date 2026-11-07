@@ -42,7 +42,8 @@ describe('commands', () => {
     expect(parseCommand('!stand graag')).toBeNull();
     expect(parseCommand('wat is de !stand')).toBeNull();
     expect(parseCommand('!foo')).toBeNull();
-    expect(parseCommand(`!roast ${'x'.repeat(60)}`)).toBeNull();
+    expect(parseCommand(`!roast ${'x'.repeat(80)}`)).toBeNull();
+    expect(parseCommand('!roast Davids skatevaardigheden')).toEqual({ command: 'roast', arg: 'Davids skatevaardigheden' });
   });
 
   it("answers !stand with today's standings", async () => {
@@ -63,7 +64,7 @@ describe('commands', () => {
 
     const withAi = setup('2026-11-06T15:00:00', { ask: async () => 'x' });
     await withAi.bot.handleGroupMessage(message({ text: '!help', timestamp: at('15:00:00') }));
-    expect(withAi.messenger.sent[0]).toContain('*!roast* [naam]');
+    expect(withAi.messenger.sent[0]).toContain('*!roast* [naam/iets]');
   });
 
   it('answers !weken with the overview', async () => {
@@ -134,7 +135,7 @@ describe('!roast', () => {
     );
     await ctx.bot.handleGroupMessage(message({ text: '!roast bob', timestamp: at('15:00:00') }));
     expect(ctx.messenger.sent).toEqual(['🔥 Bob, zelfs Zwolle weet waar jij ligt.']);
-    expect(prompt).toContain('Running joke in the group about {p1} (build the roast around it):\n- denkt dat Zwolle in Friesland ligt');
+    expect(prompt).toContain('Running joke in the group about {p1} (only use it if it makes the roast funnier):\n- denkt dat Zwolle in Friesland ligt');
     expect(prompt).not.toContain('wekker'); // one joke per roast
   });
 
@@ -155,10 +156,59 @@ describe('!roast', () => {
     expect(messenger.sent).toEqual(['🔥 Bob, nee.']);
   });
 
-  it('asks who is meant for unknown names', async () => {
-    const { bot, messenger } = await withPlayers(async () => 'x');
+  it('roasts anyone or anything else, and knows who asked', async () => {
+    let prompt = '';
+    const { bot, messenger } = await withPlayers(async (_s, p) => {
+      prompt = p;
+      return '<roast>Wie is dat nou weer, {p1}?</roast>';
+    });
     await bot.handleGroupMessage(message({ text: '!roast zorro', timestamp: at('15:00:00') }));
-    expect(messenger.sent).toEqual(['🤔 Wie is zorro?']);
+    expect(messenger.sent).toEqual(['🔥 Wie is dat nou weer, Anna?']);
+    expect(prompt).toBe('Roast this: zorro\nRequested by {p1}.');
+  });
+
+  it('roasts the requester for !roast mij and itself for !roast jezelf', async () => {
+    const prompts: string[] = [];
+    const ctx = await withPlayers(async (system, p) => {
+      prompts.push(system + '\n' + p);
+      return '<roast>{p1}, tja.</roast>';
+    });
+    await ctx.bot.handleGroupMessage(message({ text: '!roast mij', playerJid: '1002@lid', pushName: 'Bob Jansen', timestamp: at('15:00:00') }));
+    ctx.setNow('2026-11-06T15:00:20');
+    await ctx.bot.handleGroupMessage(message({ text: '!roast jezelf', timestamp: at('15:00:20') }));
+    expect(ctx.messenger.sent[0]).toBe('🔥 Bob, tja.');
+    expect(prompts[0]).toContain('MapTap (max 1000): {p1} played it on 1 of the 1 day anyone played it, average 610');
+    expect(prompts[1]).toContain('roast yourself');
+    expect(prompts[1]).toContain('you have counted 2 results of 2 players (Polderprikker, MapTap)');
+  });
+
+  it('roasts a player about a requested topic', async () => {
+    let prompt = '';
+    const { bot } = await withPlayers(async (_s, p) => {
+      prompt = p;
+      return '<roast>{p1}, nee.</roast>';
+    });
+    await bot.handleGroupMessage(message({ text: "!roast Bobs geheugen", timestamp: at('15:00:00') }));
+    expect(prompt).toContain('The requester wants the roast to be about: {p1}s geheugen');
+    expect(prompt).not.toMatch(/Bob/);
+  });
+
+  it('remembers recent roasts so it does not repeat itself, with a short cooldown', async () => {
+    const prompts: string[] = [];
+    let n = 0;
+    const ctx = await withPlayers(async (_s, p) => {
+      prompts.push(p);
+      n += 1;
+      return `<roast>{p1}, grap ${n}.</roast>`;
+    });
+    await ctx.bot.handleGroupMessage(message({ text: '!roast bob', timestamp: at('15:00:00') }));
+    ctx.setNow('2026-11-06T15:00:05');
+    await ctx.bot.handleGroupMessage(message({ text: '!roast bob', timestamp: at('15:00:05') })); // cooldown
+    ctx.setNow('2026-11-06T15:00:12');
+    await ctx.bot.handleGroupMessage(message({ text: '!roast bob', timestamp: at('15:00:12') }));
+    expect(ctx.messenger.sent).toEqual(['🔥 Bob, grap 1.', '🔥 Bob, grap 2.']);
+    expect(prompts[0]).not.toContain('Recent roasts');
+    expect(prompts[1]).toContain('Recent roasts of this target. Do not repeat their jokes, angles or running jokes:\n- {p1}, grap 1.');
   });
 
   it('stays quiet without an API key', async () => {
