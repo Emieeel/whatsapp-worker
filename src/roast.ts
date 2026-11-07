@@ -10,6 +10,8 @@ export interface Candidate {
   jid: string;
   name: string;
   phoneJid?: string;
+  /** Other names that should also match, e.g. the full WhatsApp name. */
+  altNames?: string[];
 }
 
 const ROAST_SYSTEM = `You roast one player for a Dutch WhatsApp group of close friends who play daily geography games and constantly tear into each other.
@@ -48,9 +50,16 @@ export function findPlayers(query: string, candidates: Candidate[]): Candidate[]
     (n: string) => q.length >= 3 && n.startsWith(q),
   ];
   for (const rule of rules) {
-    const matches = candidates.filter((c) => rule(c.name.toLocaleLowerCase('nl')));
+    const matches = candidates.filter((c) =>
+      [c.name, ...(c.altNames ?? [])].some((n) => rule(n.toLocaleLowerCase('nl'))),
+    );
     if (matches.length > 0) return matches;
   }
+  // Last resort: any word of a name, so a surname works too ("!roast jansen").
+  const byWord = candidates.filter((c) =>
+    [c.name, ...(c.altNames ?? [])].some((n) => n.toLocaleLowerCase('nl').split(/\s+/).includes(q)),
+  );
+  if (byWord.length > 0) return byWord;
   return [];
 }
 

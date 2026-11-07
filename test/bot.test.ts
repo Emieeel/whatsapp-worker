@@ -113,7 +113,7 @@ describe('!roast', () => {
     };
     const { bot, messenger } = await withPlayers(ask);
     await bot.handleGroupMessage(message({ text: '!roast bob', timestamp: at('15:00:00') }));
-    expect(messenger.sent).toEqual(['🔥 Bob Jansen zoekt Nederland nog steeds op de kaart van België.']);
+    expect(messenger.sent).toEqual(['🔥 Bob zoekt Nederland nog steeds op de kaart van België.']);
     expect(calls.join('\n')).not.toMatch(/Bob|Anna|Jansen|@lid/);
     expect(calls[1]).toContain('MapTap (max 1000): {p1} played it on 1 of the 1 day anyone played it, average 610');
     expect(calls[1]).toContain('Polderprikker (max 5000): {p1} did not play it once; the others average 4478');
@@ -132,7 +132,7 @@ describe('!roast', () => {
       message({ text: MAPTAP('November 6', 610), playerJid: '1002@lid', pushName: 'Bob Jansen', timestamp: at('09:30:00') }),
     );
     await ctx.bot.handleGroupMessage(message({ text: '!roast bob', timestamp: at('15:00:00') }));
-    expect(ctx.messenger.sent).toEqual(['🔥 Bob Jansen, zelfs Zwolle weet waar jij ligt.']);
+    expect(ctx.messenger.sent).toEqual(['🔥 Bob, zelfs Zwolle weet waar jij ligt.']);
     expect(prompt).toContain('Running joke in the group about {p1} (build the roast around it):\n- denkt dat Zwolle in Friesland ligt');
     expect(prompt).not.toContain('wekker'); // one joke per roast
   });
@@ -146,6 +146,12 @@ describe('!roast', () => {
     await bot.handleGroupMessage(message({ text: '!roast', timestamp: at('15:00:00') }));
     expect(messenger.sent).toEqual(['🔥 Anna is consistent: altijd net niet.']);
     expect(prompt).toContain('Polderprikker (max 5000): {p1} played it on 1 of the 1 day anyone played it, average 4478');
+  });
+
+  it('finds a player by surname too', async () => {
+    const { bot, messenger } = await withPlayers(async () => '<roast>{p1}, nee.</roast>');
+    await bot.handleGroupMessage(message({ text: '!roast jansen', timestamp: at('15:00:00') }));
+    expect(messenger.sent).toEqual(['🔥 Bob, nee.']);
   });
 
   it('asks who is meant for unknown names', async () => {

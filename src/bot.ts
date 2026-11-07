@@ -139,6 +139,7 @@ export class ScoreBot {
         jid: p.jid,
         name: nameOf(p.jid),
         phoneJid: p.phone_jid ?? undefined,
+        altNames: [p.name],
       }));
       const matches = findPlayers(query, candidates);
       if (matches.length === 0) return `🤔 Wie is ${query.slice(0, 30)}?`;
