@@ -1,7 +1,10 @@
 {
   "aliases": {
-    "_comment": "Keys: phone number (31612345678), phone JID (...@s.whatsapp.net) or LID (...@lid). Run `npm run cli -- players` to see ids.",
-    "31612345678": "Jan",
-    "123456789012345@lid": "Anna"
+    "_comment": "Optional display names. Keys: phone number (31612345678), phone JID (...@s.whatsapp.net) or LID (...@lid). Run `node dist/cli.js players` to see ids.",
+    "31612345678": "Jan"
+  },
+  "roastNotes": {
+    "_comment": "Optional running jokes per player for !roast (same keys as aliases). They are sent to the AI: no names, only game-related banter.",
+    "31612345678": ["slaapt elke ochtend door zijn wekker heen", "denkt dat Zwolle in Friesland ligt"]
   }
 }

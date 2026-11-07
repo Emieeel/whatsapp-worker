@@ -2,9 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { loadAliases, loadConfig, normalizeIdForAlias } from '../src/config.js';
+import { loadAliases, loadConfig, loadRoastNotes, normalizeIdForAlias } from '../src/config.js';
 import { Store } from '../src/db.js';
-import { buildJokePrompt, finishJoke } from '../src/joke.js';
+import { cleanReply, Pseudonyms } from '../src/ai.js';
+import { buildJokePrompt } from '../src/joke.js';
 import { buildDaily } from '../src/leaderboard.js';
 import { makeNameLookup } from '../src/names.js';
 import { ingestMessage } from '../src/scores.js';
@@ -18,19 +19,23 @@ describe('joke prompt', () => {
     ingestMessage(store, message({ text: POLDER(158, 4210), playerJid: '1002@lid', pushName: 'Bob' }), 'Europe/Amsterdam');
     const s = buildDaily(store.scoresForDay('2026-11-06'), '2026-11-06', makeNameLookup(new Map(), store.players()));
 
-    const out = buildJokePrompt(s)!;
-    expect(out.winnerName).toBe('Annabel');
-    expect(out.prompt).not.toMatch(/Annabel|Bob|lid/);
-    expect(out.prompt).toContain('Polderprikker (max 5000): {winner} 4478; others: 4210');
-    expect(out.prompt).toContain('MapTap (max 1000): {winner} 944; nobody else played');
-    expect(out.prompt).toContain('Day total (max 1000): {winner} 920');
+    const { prompt, pseudo } = buildJokePrompt(s)!;
+    expect(prompt).not.toMatch(/Annabel|Bob|lid/);
+    expect(prompt).toContain('Polderprikker (max 5000): {p1} 4478, {p2} 4210');
+    expect(prompt).toContain('MapTap (max 1000): {p1} 944');
+    expect(cleanReply('"{p1} wint, { p2 } huilt, {p9} kijkt toe."', pseudo)).toBe('Annabel wint, Bob huilt, iemand kijkt toe.');
   });
 
-  it('fills in the winner locally', () => {
-    expect(finishJoke('"{winner} kent de polder beter dan de polder zichzelf."', 'Anna')).toBe(
-      'Anna kent de polder beter dan de polder zichzelf.',
+  it('keeps only the tagged part of a chatty reply', () => {
+    const pseudo = new Pseudonyms();
+    pseudo.token('1@lid', 'Anna');
+    expect(cleanReply('Leuke opdracht! Hier komt hij:\n<roast>{p1}, je mist vaker dan je raakt.</roast>\nSucces!', pseudo, 'roast')).toBe(
+      'Anna, je mist vaker dan je raakt.',
     );
-    expect(finishJoke('   ', 'Anna')).toBeNull();
+  });
+
+  it('rejects empty replies', () => {
+    expect(cleanReply('   ', new Pseudonyms())).toBeNull();
   });
 });
 
@@ -50,6 +55,12 @@ describe('config', () => {
       ['99@lid', 'Anna'],
     ]);
     expect(loadAliases(path.join(dir, 'missing.json')).size).toBe(0);
+
+    fs.writeFileSync(file, JSON.stringify({ roastNotes: { _comment: 'x', '99@lid': ['a', ' ', 'b'], '31612345678': 'c' } }));
+    expect([...loadRoastNotes(file)]).toEqual([
+      ['99@lid', ['a', 'b']],
+      ['31612345678@s.whatsapp.net', ['c']],
+    ]);
   });
 
   it('validates the environment', () => {
@@ -60,6 +71,20 @@ describe('config', () => {
     expect(cfg.dryRun).toBe(true);
     expect(cfg.phoneNumber).toBe('31612345678');
     expect(cfg.leaderboardTime).toEqual({ hour: 22, minute: 0 });
-    expect(cfg.jokes).toMatchObject({ enabled: false, model: 'claude-haiku-5-5' });
+    expect(cfg.ai).toEqual({ provider: 'anthropic', apiKey: undefined, model: 'claude-haiku-5-5', dailyJoke: false, roast: true });
+  });
+
+  it('uses OpenRouter for an OpenRouter key, also when it sits in ANTHROPIC_API_KEY', () => {
+    const base = { CONFIG_PATH: '/nonexistent/config.json' };
+    expect(loadConfig([], { ...base, ANTHROPIC_API_KEY: 'sk-or-v1-abc', ANTHROPIC_MODEL: 'claude-haiku-5-5' }).ai).toMatchObject({
+      provider: 'openrouter',
+      apiKey: 'sk-or-v1-abc',
+      model: 'anthropic/claude-haiku-5.5',
+    });
+    expect(loadConfig([], { ...base, OPENROUTER_API_KEY: 'sk-or-x', OPENROUTER_MODEL: 'anthropic/other' }).ai).toMatchObject({
+      provider: 'openrouter',
+      model: 'anthropic/other',
+    });
+    expect(loadConfig([], { ...base, ANTHROPIC_API_KEY: 'sk-ant-abc' }).ai.provider).toBe('anthropic');
   });
 });

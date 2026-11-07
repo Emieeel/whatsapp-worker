@@ -36,8 +36,9 @@ export function testConfig(over: Partial<AppConfig> = {}): AppConfig {
     dbPath: ':memory:',
     configPath: '/tmp/unused-config.json',
     aliases: new Map(),
+    roastNotes: new Map(),
     activePlayerDays: 14,
-    jokes: { enabled: false, model: 'claude-haiku-5-5' },
+    ai: { provider: 'anthropic', model: 'claude-haiku-5-5', dailyJoke: false, roast: true },
     ...over,
   };
 }

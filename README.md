@@ -5,15 +5,15 @@ leaderboard every evening at 22:00 (Europe/Amsterdam), with a weekly summary on 
 
 - Logs in as a *linked device* of a separate WhatsApp account (Baileys 7, no browser).
 - Reads only the configured group and stores only score messages (SQLite).
-- Commands in the group: `!stand` (today), `!week` (this week), `!weken` (last 6 weeks: top 3 per week,
-  week wins, average day total), `!help`. It reacts to nothing else.
+- Commands in the group: `!stand` (today), `!week` (this week), `!weken` (last 6 weeks),
+  `!roast [name]` (needs an Anthropic API key) and `!help`. It reacts to nothing else.
 - Bot messages are in Dutch; code, logs and the CLI are in English.
 
-**Points**
-- Every game counts equally: `1000 / number of games` points each, so 500 now
-  (Polderprikker ÷ 10, MapTap ÷ 2). A game you didn't play counts as 0.
-- Day total = sum of those points, 0–1000. Week total = sum of the day totals.
-- `!help` explains this in the group, generated from the registered games.
+**Rankings.** Every game is ranked on its own; there is no combined score.
+- Day: by score.
+- Week: by average score, plus how many days each player had the best score.
+- `!weken`: the best average per game for each of the last 6 weeks, weeks won per game,
+  and the average per game over that whole period.
 
 **Rules for scores**
 - The day of a score is the Amsterdam date of the message.
@@ -192,7 +192,7 @@ To avoid this, keep the prepaid SIM active and open WhatsApp on the bot phone no
      id: 'wordle',            // stored in the DB, never change it
      name: 'Wordle',
      emoji: '🟩',
-     maxScore: 6,             // used for the day total (score / max × points per game)
+     maxScore: 6,             // highest possible score (rejects impossible results, context for Claude)
      parse(text) {
        const m = /Wordle\s+([\d.,]+)\s+([1-6X])\/6/i.exec(normalizeText(text));
        if (!m) return null;
@@ -208,8 +208,27 @@ You can check real messages with `npm run cli -- parse`.
 
 Higher scores rank higher. For a game where lower is better, such as Wordle guesses, convert it in `parse`, e.g. `score = 7 - guesses`.
 
-## Optional: daily winner joke
+## Optional: !roast and a daily joke (Claude)
 
-Set `ENABLE_JOKES=true` and `ANTHROPIC_API_KEY`. The 22:00 post then gets one dry line from `claude-haiku-5-5`.
+With an API key in `.env`, `!roast` works: `!roast jan` (a name, first name, start of a name, or an
+@mention) roasts that player; `!roast` alone picks a random active player. `ENABLE_JOKES=true` also adds
+a dry joke to the 22:00 post. `ENABLE_ROAST=false` turns `!roast` off.
 
-Only scores are sent to the API. The winner appears as the placeholder `{winnaar}`, which the bot fills in locally, so no names or chat messages leave the machine.
+The key can be an Anthropic key (`ANTHROPIC_API_KEY=sk-ant-...`, model `ANTHROPIC_MODEL`, default
+`claude-haiku-5-5`) or an OpenRouter key (`OPENROUTER_API_KEY=sk-or-...`, model `OPENROUTER_MODEL`, default
+`anthropic/claude-haiku-5.5`). An OpenRouter key in `ANTHROPIC_API_KEY` is recognised too. A roast costs a
+small fraction of a cent.
+
+A roast is built from the last 14 days of scores (averages, ranks, daily wins and last places, usual
+posting time) plus, optionally, one running joke per player from `config.json`:
+
+```json
+"roastNotes": { "31612345678": ["slaapt elke ochtend door zijn wekker heen", "denkt dat Zwolle in Friesland ligt"] }
+```
+
+Players appear as `{p1}` in everything sent to the API, and the bot puts the name back in locally, so
+names, phone numbers and chat messages never leave the machine. Running jokes are sent as written, so
+keep names out of them. Check what is sent with `node dist/cli.js roast <name>`.
+
+To get an Anthropic key: create an account at https://console.anthropic.com, buy a few dollars of
+credits, set a monthly spend limit, then create a key under *API keys*.

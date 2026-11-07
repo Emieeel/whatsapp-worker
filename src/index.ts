@@ -25,7 +25,11 @@ async function main(): Promise<void> {
     'Starting WhatsApp score bot',
   );
   if (cfg.dryRun) log.warn('DRY RUN: messages are printed here instead of being sent');
-  if (cfg.jokes.enabled) log.info({ model: cfg.jokes.model }, 'Daily winner joke enabled');
+  if (cfg.ai.apiKey) {
+    log.info({ provider: cfg.ai.provider, model: cfg.ai.model, dailyJoke: cfg.ai.dailyJoke, roast: cfg.ai.roast }, 'Claude features');
+  } else if (cfg.ai.dailyJoke || cfg.ai.roast) {
+    log.info('No ANTHROPIC_API_KEY or OPENROUTER_API_KEY; !roast and jokes are off');
+  }
 
   // After a logout the stored credentials are dead. Don't reconnect in a loop; wait for a relink.
   const marker = path.join(cfg.authDir, LOGGED_OUT_MARKER);

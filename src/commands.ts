@@ -1,59 +1,45 @@
 import { GAMES } from './games/index.js';
-import { DAY_MAX, pointsPerGame } from './leaderboard.js';
 
-export type Command = 'stand' | 'week' | 'overview' | 'help';
+export type Command = 'stand' | 'week' | 'overview' | 'roast' | 'help';
+
+export interface ParsedCommand {
+  command: Command;
+  /** Only `roast` takes an argument: who to roast. */
+  arg?: string;
+}
 
 /** Chat keyword (Dutch, as typed in the group) -> internal command. */
 const KEYWORDS: Record<string, Command> = {
   stand: 'stand',
   week: 'week',
   weken: 'overview',
+  roast: 'roast',
   help: 'help',
 };
 
-/** Only an exact command (case-insensitive, surrounding whitespace allowed) counts. */
-export function parseCommand(text: string): Command | null {
-  const m = /^\s*!([a-z]+)\s*$/i.exec(text);
-  return m ? (KEYWORDS[m[1]!.toLowerCase()] ?? null) : null;
+/** A command must be the whole message. Only `!roast` may be followed by a name (max 40 chars). */
+export function parseCommand(text: string): ParsedCommand | null {
+  const m = /^\s*!([a-z]+)(?:\s+(\S.{0,39}?))?\s*$/is.exec(text);
+  if (!m) return null;
+  const command = KEYWORDS[m[1]!.toLowerCase()];
+  if (!command) return null;
+  const arg = m[2]?.trim();
+  if (arg && command !== 'roast') return null;
+  return arg ? { command, arg } : { command };
 }
 
-/** Example results used in the help text (fraction of each game's max score). */
-const EXAMPLE_SHARES = [0.9, 0.95, 0.85, 0.8];
-
-function pointsRule(maxScore: number, perGame: number): string {
-  const factor = maxScore / perGame;
-  return Number.isInteger(factor) ? `score ÷ ${factor}` : `score × ${perGame} ÷ ${maxScore}`;
-}
-
-export function helpText(leaderboardTime: { hour: number; minute: number }): string {
+export function helpText(leaderboardTime: { hour: number; minute: number }, opts: { roast: boolean }): string {
   const time = `${String(leaderboardTime.hour).padStart(2, '0')}:${String(leaderboardTime.minute).padStart(2, '0')}`;
-  const perGame = Math.round(pointsPerGame() * 10) / 10;
-
-  const examples = GAMES.map((g, i) => {
-    const score = Math.round(g.maxScore * (EXAMPLE_SHARES[i % EXAMPLE_SHARES.length] ?? 0.9));
-    return { game: g, score, points: Math.round((score / g.maxScore) * pointsPerGame()) };
-  });
-  const exampleTotal = examples.reduce((sum, e) => sum + e.points, 0);
-
   return [
     '🤖 *Scorebot*',
-    `Ik houd de scores bij van ${GAMES.map((g) => `${g.emoji} ${g.name}`).join(' en ')}.`,
-    'Plak je resultaat gewoon in de groep; je eerste score per spel per dag telt.',
+    `Plak je ${GAMES.map((g) => `${g.emoji} ${g.name}`).join(' of ')}-resultaat in de groep; je eerste score per dag telt.`,
     '',
-    '*!stand* – stand van vandaag',
-    '*!week* – deze week tot nu toe',
-    '*!weken* – overzicht van de afgelopen weken',
+    '*!stand* – vandaag',
+    '*!week* – deze week (gemiddelde per spel)',
+    '*!weken* – de afgelopen weken',
+    ...(opts.roast ? ['*!roast* [naam] – roast iemand (zonder naam: willekeurig)'] : []),
     '*!help* – dit bericht',
     '',
-    '*Hoe werkt het totaal?*',
-    `Elk spel telt even zwaar: max ${perGame} punten.`,
-    ...GAMES.map((g) => `${g.emoji} ${g.name}: ${pointsRule(g.maxScore, perGame)} (${g.maxScore} → ${perGame})`),
-    `Dagtotaal = die punten opgeteld, max ${DAY_MAX}. Spel niet gespeeld = 0.`,
-    `Voorbeeld: ${examples.map((e) => `${e.game.name} ${e.score}`).join(' + ')} → ${examples
-      .map((e) => e.points)
-      .join(' + ')} = ${exampleTotal}`,
-    'Weektotaal = je dagtotalen opgeteld (elke dag spelen loont dus).',
-    '',
-    `Elke avond om ${time} de dagstand, op zondag ook het weekoverzicht.`,
+    `Elke avond om ${time} de dagstand, zondag ook de week.`,
   ].join('\n');
 }

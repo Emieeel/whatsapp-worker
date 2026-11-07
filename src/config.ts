@@ -1,10 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export interface JokeConfig {
-  enabled: boolean;
+export interface AiConfig {
+  /** Where requests go: the Anthropic API, or OpenRouter (which forwards to Claude). */
+  provider: 'anthropic' | 'openrouter';
+  /** API key for that provider; without it there are no jokes or roasts. */
   apiKey?: string;
   model: string;
+  /** Add a joke about the day's results to the 22:00 post. */
+  dailyJoke: boolean;
+  /** Answer !roast. */
+  roast: boolean;
 }
 
 export interface AppConfig {
@@ -23,9 +29,11 @@ export interface AppConfig {
   configPath: string;
   /** Normalised JID / phone number -> display name. */
   aliases: Map<string, string>;
+  /** Normalised JID -> running jokes for !roast (from config.json). */
+  roastNotes: Map<string, string[]>;
   /** Players who posted a score within this many days are listed under "not played yet". */
   activePlayerDays: number;
-  jokes: JokeConfig;
+  ai: AiConfig;
 }
 
 /** Load `.env` from the working directory if present. Real environment variables win. */
@@ -60,22 +68,49 @@ export function normalizeIdForAlias(id: string): string {
   return `${user.split(':')[0]}@${server === 'c.us' ? 's.whatsapp.net' : server}`;
 }
 
-export function loadAliases(configPath: string): Map<string, string> {
-  const aliases = new Map<string, string>();
+function readConfigFile(configPath: string): { aliases?: Record<string, unknown>; roastNotes?: Record<string, unknown> } {
   let raw: string;
   try {
     raw = fs.readFileSync(configPath, 'utf8');
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') return aliases;
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
     throw new Error(`Cannot read ${configPath}: ${(err as Error).message}`);
   }
-  const parsed = JSON.parse(raw) as { aliases?: Record<string, unknown> };
-  for (const [key, value] of Object.entries(parsed.aliases ?? {})) {
+  return JSON.parse(raw) as { aliases?: Record<string, unknown>; roastNotes?: Record<string, unknown> };
+}
+
+export function loadAliases(configPath: string): Map<string, string> {
+  const aliases = new Map<string, string>();
+  for (const [key, value] of Object.entries(readConfigFile(configPath).aliases ?? {})) {
     if (key.startsWith('_') || typeof value !== 'string' || !value.trim()) continue;
     aliases.set(normalizeIdForAlias(key), value.trim());
   }
   return aliases;
+}
+
+/** Running jokes per player (id -> notes) that !roast may use. They are sent to the AI, so no names. */
+export function loadRoastNotes(configPath: string): Map<string, string[]> {
+  const notes = new Map<string, string[]>();
+  for (const [key, value] of Object.entries(readConfigFile(configPath).roastNotes ?? {})) {
+    if (key.startsWith('_')) continue;
+    const list = (Array.isArray(value) ? value : [value])
+      .filter((v): v is string => typeof v === 'string' && v.trim() !== '')
+      .map((v) => v.trim());
+    if (list.length > 0) notes.set(normalizeIdForAlias(key), list);
+  }
+  return notes;
+}
+
+function aiConfig(env: NodeJS.ProcessEnv): AiConfig {
+  // An OpenRouter key ("sk-or-...") also works when it was put in ANTHROPIC_API_KEY.
+  const anthropicKey = env.ANTHROPIC_API_KEY?.trim() || undefined;
+  const openRouterKey =
+    env.OPENROUTER_API_KEY?.trim() || (anthropicKey?.startsWith('sk-or-') ? anthropicKey : undefined);
+  const common = { dailyJoke: bool(env.ENABLE_JOKES), roast: bool(env.ENABLE_ROAST, true) };
+  if (openRouterKey) {
+    return { provider: 'openrouter', apiKey: openRouterKey, model: env.OPENROUTER_MODEL || 'anthropic/claude-haiku-5.5', ...common };
+  }
+  return { provider: 'anthropic', apiKey: anthropicKey, model: env.ANTHROPIC_MODEL || 'claude-haiku-5-5', ...common };
 }
 
 export function loadConfig(argv: string[] = process.argv.slice(2), env = process.env): AppConfig {
@@ -98,11 +133,8 @@ export function loadConfig(argv: string[] = process.argv.slice(2), env = process
     dbPath: path.resolve(env.DB_PATH || './data/scores.db'),
     configPath,
     aliases: loadAliases(configPath),
+    roastNotes: loadRoastNotes(configPath),
     activePlayerDays: Number(env.ACTIVE_PLAYER_DAYS || 14),
-    jokes: {
-      enabled: bool(env.ENABLE_JOKES),
-      apiKey: env.ANTHROPIC_API_KEY || undefined,
-      model: env.ANTHROPIC_MODEL || 'claude-haiku-5-5',
-    },
+    ai: aiConfig(env),
   };
 }

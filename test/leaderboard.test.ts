@@ -1,15 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { Store } from '../src/db.js';
-import {
-  buildDaily,
-  buildOverview,
-  buildWeekly,
-  formatDaily,
-  formatOverview,
-  formatWeekly,
-  gamePoints,
-  rankEntries,
-} from '../src/leaderboard.js';
+import { buildDaily, buildOverview, buildWeekly, formatDaily, formatOverview, formatWeekly, rankEntries } from '../src/leaderboard.js';
 import { makeNameLookup } from '../src/names.js';
 import { ingestMessage } from '../src/scores.js';
 import { cet, MAPTAP, message, POLDER } from './helpers.js';
@@ -42,12 +33,6 @@ describe('ranking', () => {
       ['D', 4],
     ]);
   });
-
-  it('gives each game an equal share of 1000 points', () => {
-    expect(gamePoints(4478, 5000)).toBeCloseTo(447.8);
-    expect(gamePoints(944, 1000)).toBe(472);
-    expect(gamePoints(5000, 5000) + gamePoints(1000, 1000)).toBe(1000);
-  });
 });
 
 describe('daily standings', () => {
@@ -56,24 +41,13 @@ describe('daily standings', () => {
     store = new Store(':memory:');
   });
 
-  it('ranks per game, combines and lists who has not played', () => {
+  it('ranks each game separately and lists who has not played', () => {
     play(store, ANNA, 'Anna', '2026-11-06', 4478, 902);
     play(store, BOB, 'Bob', '2026-11-06', 4210, 944);
     play(store, CARLA, 'Carla', '2026-11-05', 3000);
 
     const names = makeNameLookup(new Map([['1002@lid', 'Bobby']]), store.players());
     const s = buildDaily(store.scoresForDay('2026-11-06'), '2026-11-06', names, [ANNA, BOB, CARLA]);
-
-    expect(s.games.map((g) => g.entries.map((e) => e.name))).toEqual([
-      ['Anna', 'Bobby'],
-      ['Bobby', 'Anna'],
-    ]);
-    // Anna: 4478/10 + 902/2 = 447.8 + 451 = 899; Bob: 421 + 472 = 893
-    expect(s.combined?.map((e) => [e.name, e.value])).toEqual([
-      ['Anna', 899],
-      ['Bobby', 893],
-    ]);
-    expect(s.notPlayed).toEqual(['Carla']);
 
     expect(formatDaily(s, { final: true })).toBe(
       [
@@ -87,20 +61,9 @@ describe('daily standings', () => {
         '🥇 Bobby — 944',
         '🥈 Anna — 902',
         '',
-        '📊 *Totaal* (max 1000, uitleg: !help)',
-        '🥇 Anna — 899',
-        '🥈 Bobby — 893',
-        '',
         '😴 Nog niet gespeeld: Carla',
       ].join('\n'),
     );
-  });
-
-  it('skips the combined ranking when only one game was played', () => {
-    play(store, ANNA, 'Anna', '2026-11-06', 4478);
-    const s = buildDaily(store.scoresForDay('2026-11-06'), '2026-11-06', makeNameLookup(new Map(), store.players()));
-    expect(s.combined).toBeNull();
-    expect(formatDaily(s, { final: false })).not.toContain('Totaal');
   });
 
   it('says so when nobody played', () => {
@@ -110,62 +73,67 @@ describe('daily standings', () => {
 });
 
 describe('weekly summary', () => {
-  it('sums daily points and counts daily wins', () => {
+  it('ranks each game by average score and counts day wins', () => {
     const store = new Store(':memory:');
-    play(store, ANNA, 'Anna', '2026-11-02', 5000, 1000); // Anna wins Monday
+    play(store, ANNA, 'Anna', '2026-11-02', 5000, 1000);
     play(store, BOB, 'Bob', '2026-11-02', 4000, 900);
-    play(store, BOB, 'Bob', '2026-11-03', 2500); // Bob alone on Tuesday
+    play(store, BOB, 'Bob', '2026-11-03', 2500);
     play(store, ANNA, 'Anna', '2026-11-04', 3000);
-    play(store, BOB, 'Bob', '2026-11-04', 3000); // tie on Wednesday
+    play(store, BOB, 'Bob', '2026-11-04', 3000); // tie: both win Wednesday
 
     const names = makeNameLookup(new Map(), store.players());
     const w = buildWeekly(store.scoresBetween('2026-11-02', '2026-11-08'), '2026-11-02', '2026-11-08', names);
-
-    // Mon: Anna 1000, Bob 400+450=850; Tue: Bob 250; Wed: both 300
-    expect(w.totals.map((e) => [e.name, e.value, e.wins, e.daysPlayed, e.average])).toEqual([
-      ['Bob', 1400, 2, 3, 467],
-      ['Anna', 1300, 2, 2, 650],
-    ]);
-    const text = formatWeekly(w, { final: true });
-    expect(text).toContain('📅 *Weekoverzicht 2 – 8 november*');
-    expect(text).toContain('🥇 Bob — 1.400 · 3 dagen · 2× dagwinst');
-    expect(text).toContain('🥈 Anna — 1.300 · 2 dagen · 2× dagwinst');
-    expect(text).toContain('ma Anna · di Bob · wo Anna & Bob · do – · vr – · za – · zo –');
+    expect(formatWeekly(w, { final: true })).toBe(
+      [
+        '📅 *Weekoverzicht 2 – 8 november*',
+        '',
+        '📍 *Polderprikker* (gemiddelde)',
+        '🥇 Anna — 4000 (2 dagen)',
+        '🥈 Bob — 3167 (3 dagen)',
+        '🏅 Dagwinsten: Anna 2 · Bob 2',
+        '',
+        '🗺️ *MapTap* (gemiddelde)',
+        '🥇 Anna — 1000 (1 dag)',
+        '🥈 Bob — 900 (1 dag)',
+        '🏅 Dagwinsten: Anna 1',
+      ].join('\n'),
+    );
   });
 });
 
 describe('overview', () => {
-  it('shows recent weeks, completed-week wins and averages', () => {
+  it('shows the winner per game per week, completed-week wins and averages', () => {
     const store = new Store(':memory:');
-    play(store, ANNA, 'Anna', '2026-10-20', 5000, 1000); // week 19-25 Oct: Anna wins
+    play(store, ANNA, 'Anna', '2026-10-20', 5000, 1000); // week 19-25 Oct
     play(store, BOB, 'Bob', '2026-10-21', 2500);
-    play(store, BOB, 'Bob', '2026-10-27', 4000, 900); // week 26 Oct - 1 Nov: Bob wins
+    play(store, BOB, 'Bob', '2026-10-27', 4000, 900); // week 26 Oct - 1 Nov
     play(store, ANNA, 'Anna', '2026-11-03', 3000); // current week
     play(store, BOB, 'Bob', '2026-11-04', 4000, 800);
 
     const names = makeNameLookup(new Map(), store.players());
     const o = buildOverview(store.scoresBetween('2026-09-28', '2026-11-06'), '2026-11-06', 6, names);
-    expect(o.weeks.map((w) => [w.from, w.to, w.current, w.totals[0]?.name])).toEqual([
-      ['2026-11-02', '2026-11-06', true, 'Bob'],
-      ['2026-10-26', '2026-11-01', false, 'Bob'],
-      ['2026-10-19', '2026-10-25', false, 'Anna'],
-    ]);
-    expect(o.weekWins.map((e) => [e.name, e.value])).toEqual([
-      ['Anna', 1],
-      ['Bob', 1],
-    ]);
-    // Anna: (1000 + 300) / 2 = 650; Bob: (250 + 850 + 800) / 3 = 633
-    expect(o.averages.map((e) => [e.name, e.value, e.daysPlayed])).toEqual([
-      ['Anna', 650, 2],
-      ['Bob', 633, 3],
-    ]);
-    expect(o.since).toBe('2026-10-20');
-
-    const text = formatOverview(o);
-    expect(text).toContain('*Deze week* (2 – 6 november)\n🥇 Bob 800 · 🥈 Anna 300');
-    expect(text).toContain('*26 oktober – 1 november*\n🥇 Bob 850');
-    expect(text).toContain('🏆 *Weekwinsten*: Anna 1× · Bob 1×');
-    expect(text).toContain('📊 *Gemiddeld dagtotaal* (sinds 20 oktober)\n🥇 Anna — 650 · 2 dagen\n🥈 Bob — 633 · 3 dagen');
+    expect(formatOverview(o)).toBe(
+      [
+        '📈 *Overzicht per week* (gemiddelde per spel)',
+        '',
+        '*Deze week* (2 – 6 november)',
+        '📍 Bob 4000 · 🗺️ Bob 800',
+        '',
+        '*26 oktober – 1 november*',
+        '📍 Bob 4000 · 🗺️ Bob 900',
+        '',
+        '*19 – 25 oktober*',
+        '📍 Anna 5000 · 🗺️ Anna 1000',
+        '',
+        '🏆 *Weekwinsten*',
+        '📍 Anna 1× · Bob 1×',
+        '🗺️ Anna 1× · Bob 1×',
+        '',
+        '📊 *Gemiddeld sinds 20 oktober*',
+        '📍 Anna 4000 · Bob 3500',
+        '🗺️ Anna 1000 · Bob 850',
+      ].join('\n'),
+    );
   });
 
   it('says so when there is nothing yet', () => {

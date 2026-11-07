@@ -1,19 +1,9 @@
 import type { ScoreRow } from './db.js';
 import { GAMES, type GameParser } from './games/index.js';
 import type { NameLookup } from './names.js';
-import { addDays, daysBetween, formatDayLong, formatDayMonth, formatWeekdayShort, weekStart } from './time.js';
+import { addDays, formatDayLong, formatDayMonth, weekStart } from './time.js';
 
-/** A day is worth at most this many points. Every game counts equally (DAY_MAX / number of games). */
-export const DAY_MAX = 1000;
-
-export function pointsPerGame(): number {
-  return DAY_MAX / GAMES.length;
-}
-
-/** Points for one result: the share of the game's max, scaled to that game's part of DAY_MAX. */
-export function gamePoints(score: number, maxScore: number): number {
-  return maxScore > 0 ? (score / maxScore) * pointsPerGame() : 0;
-}
+// Every game is ranked on its own. There is deliberately no combined score.
 
 export interface RankedEntry {
   playerJid: string;
@@ -31,39 +21,43 @@ export interface GameStandings {
 export interface DailyStandings {
   day: string;
   games: GameStandings[];
-  /** Day totals (0-DAY_MAX); null when fewer than two games were played that day. */
-  combined: RankedEntry[] | null;
   notPlayed: string[];
   scoreCount: number;
 }
 
-export interface WeeklyEntry extends RankedEntry {
-  wins: number;
-  daysPlayed: number;
-  /** Average day total over the days played. */
-  average: number;
+/** One player's week in one game: `value` is the average score. */
+export interface WeekEntry extends RankedEntry {
+  days: number;
+}
+
+export interface GameWeek {
+  game: GameParser;
+  /** Ranked by average score. */
+  entries: WeekEntry[];
+  /** Number of days each player had the best score (ties count for everyone). */
+  dayWins: RankedEntry[];
 }
 
 export interface WeeklySummary {
   from: string;
   to: string;
-  totals: WeeklyEntry[];
-  winners: Array<{ day: string; names: string[] }>;
+  games: GameWeek[];
 }
 
 export interface OverviewWeek {
   from: string;
   to: string;
   current: boolean;
-  totals: WeeklyEntry[];
+  /** Best average per game that week. */
+  winners: Array<{ game: GameParser; names: string[]; value: number }>;
 }
 
 export interface Overview {
   weeks: OverviewWeek[];
-  /** Number of completed weeks each player won. */
-  weekWins: RankedEntry[];
-  /** Average day total over all shown weeks. */
-  averages: WeeklyEntry[];
+  /** Completed weeks won, per game. */
+  weekWins: Array<{ game: GameParser; entries: RankedEntry[] }>;
+  /** Average score per game over all shown weeks. */
+  averages: Array<{ game: GameParser; entries: WeekEntry[] }>;
   /** First day with data in the shown period. */
   since: string;
 }
@@ -87,19 +81,6 @@ function mostCommon(values: Array<string | null>): string | undefined {
     if (c > bestCount) [best, bestCount] = [v, c];
   }
   return best;
-}
-
-/** Day totals of one day: sum of game points per player, rounded to whole points. */
-export function combinedRanking(rows: ScoreRow[], nameOf: NameLookup): RankedEntry[] {
-  const totals = new Map<string, { points: number; fallback: string }>();
-  for (const r of rows) {
-    const t = totals.get(r.player_jid) ?? { points: 0, fallback: r.display_name };
-    t.points += gamePoints(r.score, r.max_score);
-    totals.set(r.player_jid, t);
-  }
-  return rankEntries(
-    [...totals].map(([jid, t]) => ({ playerJid: jid, name: nameOf(jid, t.fallback), value: Math.round(t.points) })),
-  );
 }
 
 export function buildDaily(
@@ -128,119 +109,104 @@ export function buildDaily(
     .map((jid) => nameOf(jid))
     .sort((a, b) => a.localeCompare(b, 'nl'));
 
-  return {
-    day,
-    games,
-    combined: games.length >= 2 ? combinedRanking(dayRows, nameOf) : null,
-    notPlayed,
-    scoreCount: dayRows.length,
-  };
+  return { day, games, notPlayed, scoreCount: dayRows.length };
 }
 
-/** Week totals: day totals summed per player, plus daily wins and the average per day played. */
+/** Per game: average score per player over [from, to], and how many days each player won. */
 export function buildWeekly(rows: ScoreRow[], from: string, to: string, nameOf: NameLookup): WeeklySummary {
-  const acc = new Map<string, { points: number; wins: number; days: Set<string>; fallback: string }>();
-  const winners: WeeklySummary['winners'] = [];
+  const inRange = rows.filter((r) => r.game_day >= from && r.game_day <= to);
+  const games: GameWeek[] = [];
 
-  for (const day of daysBetween(from, to)) {
-    const ranking = combinedRanking(
-      rows.filter((r) => r.game_day === day),
-      nameOf,
-    );
-    winners.push({ day, names: ranking.filter((e) => e.rank === 1).map((e) => e.name) });
-    for (const e of ranking) {
-      const a = acc.get(e.playerJid) ?? { points: 0, wins: 0, days: new Set<string>(), fallback: e.name };
-      a.points += e.value;
-      a.days.add(day);
-      if (e.rank === 1) a.wins += 1;
-      acc.set(e.playerJid, a);
+  for (const game of GAMES) {
+    const gameRows = inRange.filter((r) => r.game === game.id);
+    if (gameRows.length === 0) continue;
+
+    const perPlayer = new Map<string, { sum: number; days: number; fallback: string }>();
+    const bestOfDay = new Map<string, number>();
+    for (const r of gameRows) {
+      const p = perPlayer.get(r.player_jid) ?? { sum: 0, days: 0, fallback: r.display_name };
+      p.sum += r.score;
+      p.days += 1;
+      perPlayer.set(r.player_jid, p);
+      bestOfDay.set(r.game_day, Math.max(bestOfDay.get(r.game_day) ?? -Infinity, r.score));
     }
-  }
+    const wins = new Map<string, number>();
+    for (const r of gameRows) {
+      if (r.score === bestOfDay.get(r.game_day)) wins.set(r.player_jid, (wins.get(r.player_jid) ?? 0) + 1);
+    }
 
-  const totals = rankEntries(
-    [...acc].map(([jid, a]) => ({
-      playerJid: jid,
-      name: nameOf(jid, a.fallback),
-      value: a.points,
-      wins: a.wins,
-      daysPlayed: a.days.size,
-      average: Math.round(a.points / a.days.size),
-    })),
-  );
-  return { from, to, totals, winners };
+    const name = (jid: string) => nameOf(jid, perPlayer.get(jid)?.fallback);
+    games.push({
+      game,
+      entries: rankEntries(
+        [...perPlayer].map(([jid, p]) => ({ playerJid: jid, name: name(jid), value: Math.round(p.sum / p.days), days: p.days })),
+      ),
+      dayWins: rankEntries([...wins].map(([jid, n]) => ({ playerJid: jid, name: name(jid), value: n }))),
+    });
+  }
+  return { from, to, games };
 }
 
 /** The last `weekCount` calendar weeks up to `today` (newest first), week wins and averages. */
 export function buildOverview(rows: ScoreRow[], today: string, weekCount: number, nameOf: NameLookup): Overview {
   const currentStart = weekStart(today);
   const weeks: OverviewWeek[] = [];
+  const wins = new Map<string, Map<string, { playerJid: string; name: string; value: number }>>();
+
   for (let i = 0; i < weekCount; i++) {
     const from = addDays(currentStart, -7 * i);
     const to = i === 0 ? today : addDays(from, 6);
-    const weekRows = rows.filter((r) => r.game_day >= from && r.game_day <= to);
-    if (weekRows.length === 0) continue;
-    weeks.push({ from, to, current: i === 0, totals: buildWeekly(weekRows, from, to, nameOf).totals });
-  }
-
-  const wins = new Map<string, { playerJid: string; name: string; value: number }>();
-  for (const w of weeks) {
-    if (w.current) continue;
-    for (const e of w.totals.filter((t) => t.rank === 1)) {
-      const entry = wins.get(e.playerJid) ?? { playerJid: e.playerJid, name: e.name, value: 0 };
-      entry.value += 1;
-      wins.set(e.playerJid, entry);
+    const week = buildWeekly(rows, from, to, nameOf);
+    if (week.games.length === 0) continue;
+    const current = i === 0;
+    weeks.push({
+      from,
+      to,
+      current,
+      winners: week.games.map((g) => {
+        const top = g.entries.filter((e) => e.rank === 1);
+        return { game: g.game, names: top.map((e) => e.name), value: top[0]!.value };
+      }),
+    });
+    if (current) continue;
+    for (const g of week.games) {
+      const perGame = wins.get(g.game.id) ?? new Map();
+      for (const e of g.entries.filter((x) => x.rank === 1)) {
+        const w = perGame.get(e.playerJid) ?? { playerJid: e.playerJid, name: e.name, value: 0 };
+        w.value += 1;
+        perGame.set(e.playerJid, w);
+      }
+      wins.set(g.game.id, perGame);
     }
   }
 
   const oldest = weeks[weeks.length - 1]?.from ?? today;
-  const periodRows = rows.filter((r) => r.game_day >= oldest && r.game_day <= today);
-  const since = periodRows.reduce((min, r) => (r.game_day < min ? r.game_day : min), today);
-  const averages = rankEntries(
-    buildWeekly(periodRows, oldest, today, nameOf).totals.map(({ rank: _rank, ...e }) => ({ ...e, value: e.average })),
-  );
+  const since = rows
+    .filter((r) => r.game_day >= oldest && r.game_day <= today)
+    .reduce((min, r) => (r.game_day < min ? r.game_day : min), today);
 
-  return { weeks, weekWins: rankEntries([...wins.values()]), averages, since };
+  return {
+    weeks,
+    weekWins: GAMES.filter((g) => wins.has(g.id)).map((game) => ({
+      game,
+      entries: rankEntries([...wins.get(game.id)!.values()]),
+    })),
+    averages: buildWeekly(rows, oldest, today, nameOf).games.map((g) => ({ game: g.game, entries: g.entries })),
+    since,
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Formatting (Dutch, WhatsApp markup: *bold*)
 
 const MEDALS = ['🥇', '🥈', '🥉'];
-const pointsFormat = new Intl.NumberFormat('nl-NL', { maximumFractionDigits: 0 });
 
 export function medal(rank: number): string {
   return MEDALS[rank - 1] ?? `${rank}.`;
 }
 
-function formatPoints(x: number): string {
-  return pointsFormat.format(x);
-}
-
 function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
-}
-
-export function formatDaily(s: DailyStandings, opts: { final: boolean; joke?: string }): string {
-  const title = opts.final ? '🏆 *Dagstand' : '📋 *Tussenstand';
-  const lines = [`${title} ${formatDayLong(s.day)}*`];
-
-  if (s.scoreCount === 0) {
-    lines.push('', 'Nog geen scores vandaag. 🦗');
-  }
-  for (const g of s.games) {
-    const puzzle = g.puzzle && /^\d+$/.test(g.puzzle) ? ` #${g.puzzle}` : '';
-    lines.push('', `${g.game.emoji} *${g.game.name}*${puzzle}`);
-    for (const e of g.entries) lines.push(`${medal(e.rank)} ${e.name} — ${e.value}`);
-  }
-  if (s.combined) {
-    lines.push('', `📊 *Totaal* (max ${DAY_MAX}, uitleg: !help)`);
-    for (const e of s.combined) lines.push(`${medal(e.rank)} ${e.name} — ${formatPoints(e.value)}`);
-  }
-  if (s.notPlayed.length > 0) {
-    lines.push('', `😴 Nog niet gespeeld: ${s.notPlayed.join(', ')}`);
-  }
-  if (opts.joke) lines.push('', `😏 ${opts.joke}`);
-  return lines.join('\n');
 }
 
 function formatRange(from: string, to: string): string {
@@ -249,30 +215,41 @@ function formatRange(from: string, to: string): string {
     : `${formatDayMonth(from)} – ${formatDayMonth(to)}`;
 }
 
+export function formatDaily(s: DailyStandings, opts: { final: boolean; joke?: string }): string {
+  const title = opts.final ? '🏆 *Dagstand' : '📋 *Tussenstand';
+  const lines = [`${title} ${formatDayLong(s.day)}*`];
+
+  if (s.scoreCount === 0) lines.push('', 'Nog geen scores vandaag. 🦗');
+  for (const g of s.games) {
+    const puzzle = g.puzzle && /^\d+$/.test(g.puzzle) ? ` #${g.puzzle}` : '';
+    lines.push('', `${g.game.emoji} *${g.game.name}*${puzzle}`);
+    for (const e of g.entries) lines.push(`${medal(e.rank)} ${e.name} — ${e.value}`);
+  }
+  if (s.notPlayed.length > 0) lines.push('', `😴 Nog niet gespeeld: ${s.notPlayed.join(', ')}`);
+  if (opts.joke) lines.push('', `😏 ${opts.joke}`);
+  return lines.join('\n');
+}
+
 export function formatWeekly(w: WeeklySummary, opts: { final: boolean }): string {
-  const title = opts.final ? `📅 *Weekoverzicht ${formatRange(w.from, w.to)}*` : `📅 *Week tot nu toe* (${formatRange(w.from, w.to)})`;
+  const title = opts.final
+    ? `📅 *Weekoverzicht ${formatRange(w.from, w.to)}*`
+    : `📅 *Week tot nu toe* (${formatRange(w.from, w.to)})`;
   const lines = [title];
 
-  if (w.totals.length === 0) {
+  if (w.games.length === 0) {
     lines.push('', 'Deze week nog geen scores. 🦗');
     return lines.join('\n');
   }
-
-  lines.push('', '📊 *Totaal* (dagtotalen opgeteld)');
-  for (const e of w.totals) {
-    const wins = e.wins > 0 ? ` · ${e.wins}× dagwinst` : '';
-    lines.push(`${medal(e.rank)} ${e.name} — ${formatPoints(e.value)} · ${plural(e.daysPlayed, 'dag', 'dagen')}${wins}`);
+  for (const g of w.games) {
+    lines.push('', `${g.game.emoji} *${g.game.name}* (gemiddelde)`);
+    for (const e of g.entries) lines.push(`${medal(e.rank)} ${e.name} — ${e.value} (${plural(e.days, 'dag', 'dagen')})`);
+    lines.push(`🏅 Dagwinsten: ${g.dayWins.map((e) => `${e.name} ${e.value}`).join(' · ')}`);
   }
-
-  lines.push('', '🏅 *Dagwinnaars*');
-  lines.push(
-    w.winners.map((d) => `${formatWeekdayShort(d.day)} ${d.names.length ? d.names.join(' & ') : '–'}`).join(' · '),
-  );
   return lines.join('\n');
 }
 
 export function formatOverview(o: Overview): string {
-  const lines = ['📈 *Overzicht per week*'];
+  const lines = ['📈 *Overzicht per week* (gemiddelde per spel)'];
   if (o.weeks.length === 0) {
     lines.push('', 'Nog geen scores. 🦗');
     return lines.join('\n');
@@ -280,21 +257,15 @@ export function formatOverview(o: Overview): string {
 
   for (const w of o.weeks) {
     lines.push('', w.current ? `*Deze week* (${formatRange(w.from, w.to)})` : `*${formatRange(w.from, w.to)}*`);
-    lines.push(
-      w.totals
-        .slice(0, 3)
-        .map((e) => `${medal(e.rank)} ${e.name} ${formatPoints(e.value)}`)
-        .join(' · '),
-    );
+    lines.push(w.winners.map((x) => `${x.game.emoji} ${x.names.join(' & ')} ${x.value}`).join(' · '));
   }
 
   if (o.weekWins.length > 0) {
-    lines.push('', `🏆 *Weekwinsten*: ${o.weekWins.map((e) => `${e.name} ${e.value}×`).join(' · ')}`);
+    lines.push('', '🏆 *Weekwinsten*');
+    for (const g of o.weekWins) lines.push(`${g.game.emoji} ${g.entries.map((e) => `${e.name} ${e.value}×`).join(' · ')}`);
   }
 
-  lines.push('', `📊 *Gemiddeld dagtotaal* (sinds ${formatDayMonth(o.since)})`);
-  for (const e of o.averages) {
-    lines.push(`${medal(e.rank)} ${e.name} — ${formatPoints(e.value)} · ${plural(e.daysPlayed, 'dag', 'dagen')}`);
-  }
+  lines.push('', `📊 *Gemiddeld sinds ${formatDayMonth(o.since)}*`);
+  for (const g of o.averages) lines.push(`${g.game.emoji} ${g.entries.map((e) => `${e.name} ${e.value}`).join(' · ')}`);
   return lines.join('\n');
 }

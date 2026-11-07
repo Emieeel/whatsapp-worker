@@ -2,6 +2,7 @@
 //   node dist/cli.js stand [YYYY-MM-DD]
 //   node dist/cli.js week [YYYY-MM-DD]
 //   node dist/cli.js weken [YYYY-MM-DD]
+//   node dist/cli.js roast [name]
 //   node dist/cli.js players
 //   node dist/cli.js import <export.txt> [--apply]
 //   node dist/cli.js parse < message.txt
@@ -19,6 +20,7 @@ const USAGE = `Usage: cli <command>
   stand [YYYY-MM-DD]   standings for a day (default: today)
   week [YYYY-MM-DD]    week summary up to that day (default: today)
   weken [YYYY-MM-DD]   overview of the last weeks (the !weken command)
+  roast [name]         show the roast prompt for a player and, with an API key, the roast
   players              known players and their ids (for aliases in config.json)
   import <file> [--apply]
                        import past scores from a WhatsApp chat export (.txt);
@@ -76,13 +78,16 @@ async function main(): Promise<void> {
       return;
     }
 
-    const day = arg ?? bot.today();
+    const day = command !== 'roast' && arg ? arg : bot.today();
     if (command === 'stand') {
       console.log(formatDaily(await bot.daily(day), { final: false }));
     } else if (command === 'week') {
       console.log(formatWeekly(bot.weekly(day), { final: false }));
     } else if (command === 'weken') {
       console.log(formatOverview(bot.overview(day)));
+    } else if (command === 'roast') {
+      const result = await bot.roast(arg, { showPrompt: (p) => console.log(`--- prompt sent to Claude ---\n${p}\n---`) });
+      console.log(result ?? '(no roast: no API key, or Claude gave no answer)');
     } else if (command === 'players') {
       for (const p of store.players()) {
         const alias = cfg.aliases.get(normalizeIdForAlias(p.jid)) ??
